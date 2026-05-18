@@ -34,6 +34,25 @@
             <artifactId>spring-boot-starter-thymeleaf</artifactId>
         </dependency>
 
+        <!-- ONNX Runtime for Java inference -->
+        <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>1.17.0</version>
+        </dependency>
+
+        <!-- DL4J for graph feature computation (lighter than full PyTorch) -->
+        <dependency>
+            <groupId>org.deeplearning4j</groupId>
+            <artifactId>deeplearning4j-core</artifactId>
+            <version>1.0.0-M2.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.nd4j</groupId>
+            <artifactId>nd4j-native-platform</artifactId>
+            <version>1.0.0-M2.1</version>
+        </dependency>
+
         <!-- JPA + H2 in-memory DB (so the demo runs with zero setup) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
