@@ -47,6 +47,13 @@ public class Transaction {
     @Column(nullable = false)
     private Status status;
 
+    // GNN fraud scoring fields
+    @Column(precision = 10, scale = 9)
+    private BigDecimal gnnProbability;
+
+    @Column(length = 255)
+    private String gnnReason;
+
     public enum Status { SETTLED, REJECTED }
 
     public Transaction() {}
@@ -80,4 +87,10 @@ public class Transaction {
 
     public Status getStatus() { return status; }
     public void setStatus(Status status) { this.status = status; }
+
+    public BigDecimal getGnnProbability() { return gnnProbability; }
+    public void setGnnProbability(BigDecimal gnnProbability) { this.gnnProbability = gnnProbability; }
+
+    public String getGnnReason() { return gnnReason; }
+    public void setGnnReason(String gnnReason) { this.gnnReason = gnnReason; }
 }
