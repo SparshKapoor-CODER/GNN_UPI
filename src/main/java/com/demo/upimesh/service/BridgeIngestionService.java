@@ -1,6 +1,8 @@
 package com.demo.upimesh.service;
 
 import com.demo.upimesh.crypto.HybridCryptoService;
+import com.demo.upimesh.gnn.GNNFraudScorer;
+import com.demo.upimesh.gnn.TransactionFeatureExtractor;
 import com.demo.upimesh.model.MeshPacket;
 import com.demo.upimesh.model.PaymentInstruction;
 import com.demo.upimesh.model.Transaction;
@@ -22,7 +24,9 @@ import java.time.Instant;
  *   3. Decrypt the ciphertext with the server's private key.
  *      - If decryption fails: tampered or junk. Reject.
  *   4. Check freshness — reject if signedAt is too old (replay protection).
- *   5. Hand off to SettlementService for the actual debit/credit.
+ *   5. Run GNN fraud scoring on the decrypted instruction.
+ *      - If GNN returns BLOCK, reject immediately without settlement.
+ *   6. Hand off to SettlementService for the actual debit/credit.
  */
 @Service
 public class BridgeIngestionService {
@@ -32,6 +36,8 @@ public class BridgeIngestionService {
     @Autowired private HybridCryptoService crypto;
     @Autowired private IdempotencyService idempotency;
     @Autowired private SettlementService settlement;
+    @Autowired private GNNFraudScorer gnnScorer;
+    @Autowired private TransactionFeatureExtractor featureExtractor;
 
     @Value("${upi.mesh.packet-max-age-seconds:86400}")
     private long maxAgeSeconds;
@@ -68,9 +74,21 @@ public class BridgeIngestionService {
                 return IngestResult.invalid(packetHash, "future_dated");
             }
 
-            // ---- Settle ----
-            Transaction tx = settlement.settle(instruction, packetHash, bridgeNodeId, hopCount);
-            return IngestResult.settled(packetHash, tx);
+            // ---- GNN fraud scoring ----
+            float[] features = featureExtractor.extract(instruction, hopCount);
+            GNNFraudScorer.FraudScore score = gnnScorer.score(features);
+
+            if (score.decision() == GNNFraudScorer.Decision.BLOCK) {
+                log.warn("GNN BLOCKED packet {} fraudProb={} reason={}",
+                        packetHash.substring(0, 12), score.fraudProbability(), score.reason());
+                return IngestResult.blockedByGnn(packetHash, score.reason(),
+                        score.fraudProbability(), score.reason());
+            }
+
+            // ---- Settle (pass GNN metadata to store in transaction) ----
+            Transaction tx = settlement.settle(instruction, packetHash, bridgeNodeId, hopCount,
+                    score.fraudProbability(), score.reason());
+            return IngestResult.settled(packetHash, tx, score.fraudProbability(), score.reason());
 
         } catch (Exception e) {
             log.error("Ingestion error: {}", e.getMessage(), e);
@@ -78,15 +96,28 @@ public class BridgeIngestionService {
         }
     }
 
-    public record IngestResult(String outcome, String packetHash, String reason, Long transactionId) {
-        public static IngestResult settled(String hash, Transaction tx) {
-            return new IngestResult("SETTLED", hash, null, tx.getId());
+    public record IngestResult(
+            String outcome,
+            String packetHash,
+            String reason,
+            Long transactionId,
+            Float fraudProbability,
+            String gnnReason
+    ) {
+        public static IngestResult settled(String hash, Transaction tx, Float fraudProb, String gnnReason) {
+            return new IngestResult("SETTLED", hash, null, tx.getId(), fraudProb, gnnReason);
         }
+
         public static IngestResult duplicate(String hash) {
-            return new IngestResult("DUPLICATE_DROPPED", hash, null, null);
+            return new IngestResult("DUPLICATE_DROPPED", hash, null, null, null, null);
         }
+
         public static IngestResult invalid(String hash, String reason) {
-            return new IngestResult("INVALID", hash, reason, null);
+            return new IngestResult("INVALID", hash, reason, null, null, null);
+        }
+
+        public static IngestResult blockedByGnn(String hash, String reason, Float fraudProb, String gnnReason) {
+            return new IngestResult("BLOCKED_BY_GNN", hash, reason, null, fraudProb, gnnReason);
         }
     }
 }
