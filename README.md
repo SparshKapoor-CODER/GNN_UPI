@@ -1,8 +1,8 @@
-# UPI Offline Mesh — Demo
+# UPI Offline Mesh + GNN Fraud Detection
 
-A Spring Boot backend that demonstrates **offline UPI payments routed through a Bluetooth-style mesh network**. You're in a basement with zero connectivity. You send your friend ₹500. Your phone encrypts the payment, broadcasts it to nearby phones, and the packet hops device-to-device until *some* phone walks outside, gets 4G, and silently uploads it to this backend. The backend decrypts, deduplicates, and settles.
+A Spring Boot backend demonstrating **offline UPI payments routed through a Bluetooth-style mesh network**, now with a **Graph Neural Network (GNN) fraud detection layer** that scores every transaction before settlement.
 
-This repo is the **server side** of that system, plus a software simulator of the mesh so you can demo the whole flow on a single laptop without any real Bluetooth hardware.
+> You're in a basement with zero connectivity. You send your friend ₹500. Your phone encrypts the payment, broadcasts it to nearby phones, and the packet hops device-to-device until *some* phone walks outside, gets 4G, and silently uploads it to this backend. The backend decrypts, deduplicates, **scores it with a GNN**, and settles.
 
 ---
 
@@ -10,26 +10,25 @@ This repo is the **server side** of that system, plus a software simulator of th
 
 1. [What this demo proves](#what-this-demo-proves)
 2. [How to run it](#how-to-run-it)
-3. [The demo flow (step by step)](#the-demo-flow-step-by-step)
+3. [The demo flow](#the-demo-flow-step-by-step)
 4. [Architecture](#architecture)
-5. [The three hard problems and how they're solved](#the-three-hard-problems-and-how-theyre-solved)
-6. [File-by-file walkthrough](#file-by-file-walkthrough)
-7. [API reference](#api-reference)
-8. [Tests](#tests)
-9. [What's NOT real (and what would change for production)](#whats-not-real-and-what-would-change-for-production)
-10. [Honest limitations of the concept](#honest-limitations-of-the-concept)
+5. [The four hard problems and how they're solved](#the-four-hard-problems-and-how-theyre-solved)
+6. [GNN Fraud Detection](#gnn-fraud-detection)
+7. [File-by-file walkthrough](#file-by-file-walkthrough)
+8. [API reference](#api-reference)
+9. [Tests](#tests)
+10. [What's NOT real](#whats-not-real-and-what-would-change-for-production)
+11. [Honest limitations](#honest-limitations-of-the-concept)
+12. [Contributors](#contributors)
 
 ---
 
 ## What this demo proves
 
-The system shows three things working end to end:
-
 1. **A payment can travel from sender to backend through untrusted intermediaries** without any of them being able to read or tamper with it. (Hybrid RSA + AES-GCM encryption.)
 2. **Even if the same payment reaches the backend simultaneously through multiple bridge nodes, it settles exactly once.** (Idempotency via atomic compare-and-set on the ciphertext hash.)
 3. **A tampered or replayed packet is rejected** before it touches the ledger.
-
-You'll see all three in the dashboard.
+4. **A Graph Neural Network scores every transaction** for fraud before settlement — blocking suspicious payments and flagging borderline ones for review, without blocking legitimate ones.
 
 ---
 
@@ -37,181 +36,148 @@ You'll see all three in the dashboard.
 
 ### Prerequisites
 
-- **JDK 17 or newer** installed and on PATH (or `JAVA_HOME` set). Check with `java -version`.
-- That's it. No database, no Redis, no Maven (the wrapper handles it). Just Java.
+- **JDK 17 or newer** on PATH (or `JAVA_HOME` set). Check with `java -version`.
+- The trained ONNX model at `models/fraud_classifier.onnx` (already included).
+- That's it. No database, no Redis, no separate ML server.
 
-### Run on Windows
-
-Open a terminal in the project folder and run:
+### Windows
 
 ```cmd
 mvnw.cmd spring-boot:run
 ```
 
-The first run downloads Maven (~10 MB) and all dependencies (~80 MB) — give it a couple of minutes. Subsequent runs start in a few seconds.
-
-### Run on Mac/Linux
+### Mac / Linux
 
 ```bash
 ./mvnw spring-boot:run
 ```
 
+First run downloads Maven + dependencies (~80 MB). Subsequent runs start in ~10 seconds.
+
 ### Open the dashboard
 
-Once you see `Started UpiMeshApplication in X.XXX seconds`, open:
+Once you see `Started UpiMeshApplication`, open:
 
 **http://localhost:8080**
 
-You'll get a dark dashboard with everything you need to drive the demo.
-
-### Stop the server
-
-`Ctrl+C` in the terminal.
-
-### Run the tests
-
-```cmd
-mvnw.cmd test
-```
-
-The interesting one is `IdempotencyConcurrencyTest` — it fires three threads delivering the same packet simultaneously and asserts that exactly one settles.
+You'll get a dark dashboard with live GNN scores, fraud stats, and the full mesh simulation.
 
 ---
 
 ## The demo flow (step by step)
 
-The dashboard has four buttons that walk through the full pipeline. The intended sequence:
-
 ### Step 1 — Compose a payment
 
-Choose sender, receiver, amount, PIN. Click **"📤 Inject into Mesh"**.
+Choose sender, receiver, amount, PIN → **📤 Inject into Mesh**.
 
-**What actually happens on the backend:**
-- The server pretends to be the sender's phone.
-- It builds a `PaymentInstruction` with a unique nonce and current timestamp.
-- It encrypts that with the server's RSA public key (using hybrid encryption — see below).
-- It wraps the ciphertext in a `MeshPacket` with a TTL of 5.
-- It hands the packet to `phone-alice`, an offline virtual device.
+The server simulates the sender's phone: builds a `PaymentInstruction`, encrypts it with RSA+AES, wraps it in a `MeshPacket` with TTL=5, hands it to `phone-alice`.
 
-You'll see `phone-alice` now holds 1 packet.
+### Step 2 — Gossip
 
-### Step 2 — Run gossip rounds
+Click **🔄 Run Gossip Round** twice.
 
-Click **"🔄 Run Gossip Round"**. Then click it again.
-
-Each round, every device that holds a packet broadcasts it to every other device within "Bluetooth range" (which, in our simulator, means everyone). TTL decrements per hop.
-
-After 1 round: every device holds the packet. After 2 rounds: still every device — TTL is just lower.
-
-In the real system this would happen organically as people walk past each other in the basement.
+Each round, every device broadcasts its packets to every nearby device. TTL decrements each hop. After 2 rounds every device holds the packet — including `phone-bridge`.
 
 ### Step 3 — Bridge node walks outside
 
-Click **"📡 Bridges Upload to Backend"**.
+Click **📡 Bridges Upload to Backend**.
 
-`phone-bridge` is the only device with `hasInternet=true`. The dashboard simulates that phone walking outside and getting 4G. It POSTs every packet it holds to `/api/bridge/ingest`.
+`phone-bridge` (the only device with `hasInternet=true`) POSTs all its packets to `/api/bridge/ingest`. The full pipeline runs per packet:
 
-The backend pipeline runs:
-1. Hash the ciphertext (`SHA-256`).
-2. Try to claim the hash in the idempotency cache.
-3. If claimed: decrypt with the server's RSA private key.
-4. Verify freshness (signedAt within 24 hours).
-5. Run the debit/credit in a single DB transaction.
+1. Hash the ciphertext (SHA-256)
+2. Idempotency gate — duplicate? Drop.
+3. Decrypt with the server's RSA private key
+4. Freshness check — stale/replayed? Reject.
+5. **GNN fraud scoring** — BLOCK / FLAG / ALLOW
+6. Settlement — debit sender, credit receiver, write ledger
 
-Watch the **Account Balances** table — money has moved. Watch the **Transaction Ledger** — a new row appears.
+### Step 4 — Watch the GNN
 
-### Step 4 — Demonstrate idempotency (the killer feature)
+The **Last Bridge Upload Results** panel shows a score pill per upload:
 
-Reset the mesh. Inject a single packet. Run gossip 2 times. Now **all 5 devices hold the same packet, including multiple bridges in a more complex setup**.
+| Pill | Meaning |
+|---|---|
+| `✅ 2.3%` | Low fraud probability — ALLOWED, proceeds to settlement |
+| `⚠️ 61.4%` | Medium — FLAGGED, settles but logged for review |
+| `🚫 91.2%` | High — BLOCKED, transaction rejected before ledger |
 
-To really see idempotency in action, modify `MeshSimulatorService.java` to seed multiple bridge devices, or just:
+The **Transaction Ledger** also shows `GNN Score` and `Reason` columns pulled directly from the database.
 
-1. Click "Inject" once.
-2. Click "Gossip" twice.
-3. Click "Flush Bridges" — only `phone-bridge` is a bridge in the default seed, so just one upload happens.
+### Step 5 — Test a fraud scenario
 
-To exercise the *concurrent duplicate* case properly, run the test:
-```cmd
-mvnw.cmd test -Dtest=IdempotencyConcurrencyTest#singlePacketDeliveredByThreeBridgesSettlesExactlyOnce
+Send `alice@demo → dave@demo` with amount `9999` (near-threshold structuring pattern + new sender-receiver pair). After flush, watch the log:
+
 ```
-
-This test creates one packet, fires 3 threads at `BridgeIngestionService.ingest()` simultaneously, and verifies that exactly one settles, two are dropped as duplicates, and the sender is debited exactly once.
+GNN score for alice@demo→dave@demo ₹9999.00: prob=71.4% decision=FLAG
+reason=near_threshold_amount new_sender_receiver_pair
+```
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         SENDER PHONE (offline)                          │
-│  PaymentInstruction { sender, receiver, amount, pinHash, nonce, time }  │
-│              │                                                          │
-│              ▼ encrypt with server's RSA public key                     │
-│   MeshPacket { packetId, ttl, createdAt, ciphertext }                   │
-└──────────────────────────────────────┬──────────────────────────────────┘
-                                       │ Bluetooth gossip
-                                       ▼
-        ┌─────────┐  hop   ┌─────────┐  hop   ┌─────────┐
-        │stranger1│ ─────▶ │stranger2│ ─────▶ │ bridge  │ ◀── walks outside
-        └─────────┘        └─────────┘        └────┬────┘     gets 4G
-                                                   │
-                                                   ▼ HTTPS POST
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     SPRING BOOT BACKEND (this project)                  │
-│                                                                         │
-│  /api/bridge/ingest                                                     │
-│       │                                                                 │
-│       ▼                                                                 │
-│  [1] hash ciphertext (SHA-256)                                          │
-│       │                                                                 │
-│       ▼                                                                 │
-│  [2] IdempotencyService.claim(hash)  ◀── atomic putIfAbsent (≈ Redis    │
-│       │                                  SETNX). Duplicates rejected    │
-│       │                                  here, before any work.         │
-│       ▼                                                                 │
-│  [3] HybridCryptoService.decrypt(ciphertext)                            │
-│       │       (RSA-OAEP unwraps AES key, AES-GCM decrypts payload       │
-│       │        AND verifies the auth tag — tampering = exception)       │
-│       ▼                                                                 │
-│  [4] Freshness check: signedAt within last 24h                          │
-│       │                                                                 │
-│       ▼                                                                 │
-│  [5] SettlementService.settle()                                         │
-│       @Transactional: debit sender, credit receiver, write ledger       │
-│       @Version on Account = optimistic locking (defense in depth)       │
-└─────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        SENDER PHONE (offline)                            │
+│  PaymentInstruction { sender, receiver, amount, pinHash, nonce, time }   │
+│              │                                                           │
+│              ▼  encrypt with server's RSA public key (hybrid RSA+AES)   │
+│   MeshPacket { packetId, ttl, createdAt, ciphertext }                    │
+└─────────────────────────────────────┬────────────────────────────────────┘
+                                      │  Bluetooth gossip (BLE / Wi-Fi Direct)
+                                      ▼
+       ┌──────────┐  hop  ┌──────────┐  hop  ┌──────────┐
+       │stranger1 │ ────▶ │stranger2 │ ────▶ │  bridge  │ ◀── walks outside
+       └──────────┘       └──────────┘       └────┬─────┘     gets 4G
+                                                  │
+                                                  ▼  HTTPS POST
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    SPRING BOOT BACKEND (this project)                    │
+│                                                                          │
+│  /api/bridge/ingest                                                      │
+│       │                                                                  │
+│       ▼  [1] SHA-256(ciphertext)                                         │
+│       │                                                                  │
+│       ▼  [2] IdempotencyService.claim(hash)   ← ConcurrentHashMap SETNX │
+│       │       duplicate? → DUPLICATE_DROPPED                             │
+│       │                                                                  │
+│       ▼  [3] HybridCryptoService.decrypt()    ← RSA-OAEP + AES-256-GCM  │
+│       │       tampered?  → INVALID                                       │
+│       │                                                                  │
+│       ▼  [4] Freshness check (signedAt window)                           │
+│       │       stale/future? → INVALID                                    │
+│       │                                                                  │
+│       ▼  [5] GNNFraudScorer.score(features)   ← ONNX Runtime            │
+│       │       BLOCK (≥0.85)? → BLOCKED_BY_GNN                           │
+│       │       FLAG  (≥0.50)? → settle + log                              │
+│       │                                                                  │
+│       ▼  [6] SettlementService.settle()        ← @Transactional          │
+│               debit sender, credit receiver, write ledger + GNN metadata │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## The three hard problems and how they're solved
+## The four hard problems and how they're solved
 
 ### Problem 1: Untrusted intermediates
 
-A random stranger's phone is carrying your transaction. How do you stop them from reading the amount or changing it?
+A stranger's phone carries your transaction. How do you prevent them reading the amount or modifying it?
 
 **Solution: Hybrid encryption (RSA-OAEP + AES-GCM).**
 
-The sender encrypts the payload with the server's public key. Only the server holds the private key, so intermediates see opaque ciphertext.
+1. Generate a one-time AES-256 key per packet.
+2. Encrypt the payment JSON with **AES-256-GCM** (fast + authenticated).
+3. Encrypt the AES key with **RSA-OAEP** using the server's public key.
+4. Wire format: `[256-byte RSA-encrypted AES key][12-byte IV][AES ciphertext + 16-byte GCM tag]`
 
-But RSA can only encrypt small data (~245 bytes for a 2048-bit key), and our payload is JSON that could exceed that. So we use the standard hybrid pattern:
-
-1. Generate a fresh AES-256 key for *this packet*.
-2. Encrypt the JSON with **AES-256-GCM** (fast + authenticated).
-3. Encrypt just the AES key with **RSA-OAEP**.
-4. Concatenate: `[256 bytes RSA-encrypted AES key][12 bytes IV][AES ciphertext + 16-byte GCM tag]`.
-
-**Why GCM specifically?** It's authenticated encryption. If an intermediate flips one bit anywhere in the ciphertext, decryption throws an exception — the GCM tag won't verify. The server cannot be tricked into processing tampered data.
-
-This is the same scheme TLS uses. See `HybridCryptoService.java`.
+AES-GCM is *authenticated* encryption — a single flipped bit anywhere throws an exception on decryption. Intermediates cannot tamper undetected. See `HybridCryptoService.java`.
 
 ### Problem 2: The duplicate-storm
 
-Three bridge nodes hold the same packet. They all walk outside at the same instant. They all POST to `/api/bridge/ingest` within milliseconds of each other. If you naively process all three, the sender is debited ₹1500 instead of ₹500.
+Three bridges hold the same packet, walk outside simultaneously, and POST to the backend within milliseconds. Naive processing debits the sender three times.
 
 **Solution: Atomic compare-and-set on the ciphertext hash.**
-
-The very first thing the server does on receiving a packet is compute `SHA-256(ciphertext)` and try to "claim" that hash:
 
 ```java
 // IdempotencyService.java
@@ -219,27 +185,120 @@ Instant prev = seen.putIfAbsent(packetHash, now);
 return prev == null;  // true = first claimer, false = duplicate
 ```
 
-`ConcurrentHashMap.putIfAbsent` is atomic. Even if 100 threads call it at the exact same nanosecond, exactly one returns `null` (the first claimer) and the rest return the existing entry. Only the first claimer proceeds to decrypt and settle. The rest are short-circuited as `DUPLICATE_DROPPED`.
+`ConcurrentHashMap.putIfAbsent` is atomic at the JVM level. Exactly one thread gets `null` back; the rest are short-circuited as `DUPLICATE_DROPPED` before any decryption or DB work.
 
-**Why hash the ciphertext, not the packetId or the cleartext?**
-- `packetId` can be rewritten by a malicious intermediate. Two copies of the same payment could have different packetIds. Bad key.
-- The cleartext requires decryption first. We want to dedupe *before* spending CPU on RSA.
-- The ciphertext is authenticated by GCM, so any tampering is detectable on decrypt. Two legitimate deliveries of the same payment have byte-identical ciphertexts (AES is deterministic for a given key+IV+plaintext, and the same packet means the same key+IV+plaintext).
-
-In production this `ConcurrentHashMap` becomes Redis: `SET key NX EX 86400`. Same semantics, distributed across replicas.
-
-There's also a defense-in-depth fallback: `transactions.packet_hash` has a unique index. If the cache layer ever fails and two settlements somehow try to write the same hash, the database rejects the second one.
+In production this becomes Redis `SET key NX EX 86400`. Same semantics, distributed. A DB unique index on `packet_hash` provides defense-in-depth.
 
 ### Problem 3: Replay attacks
 
-An attacker who captured a ciphertext weeks ago could replay it whenever convenient.
+An attacker captures a ciphertext and replays it later.
 
 **Solution: Two layers.**
 
-1. **Inside the encrypted payload**, the sender includes `signedAt` (epoch millis). The server rejects any packet older than 24 hours. The attacker can't change `signedAt` without breaking the GCM tag.
-2. **Inside the encrypted payload**, the sender includes a **nonce** (UUID). Even if Alice legitimately sends Bob ₹100 twice, the nonces differ → ciphertexts differ → hashes differ → both settle. But a *replay* of one specific signed packet is byte-identical, so the idempotency cache catches it.
+1. `signedAt` (epoch ms) is *inside* the AES-GCM payload — it cannot be changed without breaking the tag. The server rejects packets older than 24 hours.
+2. Each payment has a unique `nonce` (UUID). Even if Alice legitimately pays Bob ₹100 twice, the nonces differ → ciphertexts differ → hashes differ → both settle. A replay of an exact copy is byte-identical and caught by the idempotency cache.
 
-See `BridgeIngestionService.java` for the freshness check.
+### Problem 4: Behavioral fraud (new)
+
+SIM swap, high-velocity bursts, structuring attacks, and first-time large transfers are invisible to the cryptographic layer.
+
+**Solution: Graph Neural Network scoring.** See the full explanation below.
+
+---
+
+## GNN Fraud Detection
+
+### Why a GNN?
+
+Traditional fraud detection treats each transaction in isolation. Real fraud is *relational* — a fraudster reuses the same device across multiple accounts, bursts many transactions in seconds, and targets new victims with large amounts. A GNN models the entire transaction graph and learns these patterns.
+
+This implementation follows the architecture from:
+> Penaganti, R. (2025). *Graph Neural Network-Based Framework for Real-Time Financial Fraud Detection in Digital Payment Ecosystems.* Journal of Computing and Data Technology.
+
+### Graph structure
+
+```
+Nodes: User, Device, Transaction
+Edges:
+  user  --SENT-->        transaction
+  transaction --RECEIVED_BY--> user
+  user  --USES-->        device
+  device --CARRIED-->    transaction
+```
+
+### Model architecture
+
+```
+Input features (5-dim per transaction):
+  [0] amount_normalized       = amount / ₹10,000
+  [1] hour_of_day_normalized  = hour / 24
+  [2] hop_count_normalized    = hops / 8
+  [3] velocity_normalized     = txns in last 10 min / 20
+  [4] is_new_pair             = 1 if sender never sent to this receiver
+
+  ↓  HeteroConv Layer 1  (SAGEConv, relation-aware message passing)
+  ↓  HeteroConv Layer 2  (SAGEConv, 64-dim hidden)
+  ↓  Classifier MLP      (64 → 32 → 2)
+  ↓  Softmax → fraud probability [0, 1]
+
+Loss = 0.3 × CrossEntropy(class-weighted) + 0.7 × ReconstructionMSE
+```
+
+The combined supervised + unsupervised loss (from Penaganti eq. 11) lets the model also detect *novel* fraud patterns it wasn't trained on.
+
+### Training results
+
+| Metric | Value |
+|---|---|
+| AUC-ROC | 1.00 (synthetic dataset) |
+| Best Val AUC | 1.00 |
+| Fraud class weight | 33× (handles 3% fraud imbalance) |
+| Dataset size | 10,000 transactions, 200 users, 180 devices |
+
+> **Note:** AUC=1.0 is expected on the synthetic dataset because fraud labels were generated from perfectly separable rules. On real UPI data expect ~0.92–0.96 (matching the Penaganti paper's reported 0.96 AUC on a 5M transaction dataset).
+
+### Decision thresholds (configurable)
+
+```properties
+upi.gnn.block-threshold=0.85   # hard block — transaction rejected
+upi.gnn.flag-threshold=0.50    # soft flag — settles, logged for review
+```
+
+### Fraud signals detected
+
+| Signal | Feature | Threshold |
+|---|---|---|
+| Near-threshold structuring | `amount ≥ ₹9,800` | `f[0] > 0.98` |
+| Unusual transaction hour | Before 4 AM or after 11 PM | `f[1] < 0.17 or > 0.96` |
+| High hop count | More than 5 mesh hops | `f[2] > 0.625` |
+| Velocity burst | More than 8 txns in 10 min | `f[3] > 0.40` |
+| New sender-receiver pair | First-ever transaction | `f[4] = 1.0` |
+
+### Python training pipeline
+
+```
+scripts/
+  generate_dataset.py   → synthetic 10,000-transaction CSV
+  build_graph.py        → PyTorch Geometric HeteroData graph
+  model.py              → UPIFraudGNN (HeteroConv + SAGEConv)
+  train.py              → training loop, early stopping, AUC eval
+  export_onnx.py        → export classifier head to ONNX for Java
+
+models/
+  best_gnn.pt           → trained PyTorch weights
+  fraud_classifier.onnx → ONNX export loaded by Java at runtime
+  metadata.json         → threshold and AUC metadata
+```
+
+To retrain from scratch:
+
+```bash
+pip install torch torch-geometric scikit-learn pandas numpy
+python scripts/generate_dataset.py
+python scripts/build_graph.py
+python scripts/train.py
+python scripts/export_onnx.py
+```
 
 ---
 
@@ -247,45 +306,45 @@ See `BridgeIngestionService.java` for the freshness check.
 
 ```
 upi-offline-mesh/
-├── pom.xml                                  Maven build, Spring Boot 3.3, Java 17
-├── mvnw, mvnw.cmd                           Maven wrapper (no install needed)
-├── README.md                                this file
-└── src/main/
-    ├── resources/
-    │   ├── application.properties           H2 in-memory DB, port 8080, TTLs
-    │   └── templates/dashboard.html         The interactive demo UI
-    └── java/com/demo/upimesh/
-        ├── UpiMeshApplication.java          Spring Boot main class
-        │
-        ├── model/                           ── Domain layer
-        │   ├── Account.java                 JPA entity. @Version = optimistic lock
-        │   ├── AccountRepository.java       Spring Data JPA
-        │   ├── Transaction.java             Settled-tx ledger. unique idx on packetHash
-        │   ├── TransactionRepository.java   Spring Data JPA
-        │   ├── MeshPacket.java              Wire format. Outer fields readable, ciphertext opaque
-        │   └── PaymentInstruction.java      Decrypted payload (sender/receiver/amount/nonce/time)
-        │
-        ├── crypto/                          ── Cryptography layer
-        │   ├── ServerKeyHolder.java         Generates RSA-2048 keypair on startup
-        │   └── HybridCryptoService.java     RSA-OAEP + AES-256-GCM encrypt/decrypt + ciphertext hash
-        │
-        ├── service/                         ── Business logic
-        │   ├── DemoService.java             Seeds accounts, simulates a sender phone
-        │   ├── VirtualDevice.java           One simulated phone in the mesh
-        │   ├── MeshSimulatorService.java    Gossip protocol across virtual devices
-        │   ├── IdempotencyService.java      ConcurrentHashMap = JVM-local Redis SETNX
-        │   ├── SettlementService.java       @Transactional debit + credit + ledger insert
-        │   └── BridgeIngestionService.java  THE pipeline: hash → claim → decrypt → freshness → settle
-        │
-        ├── controller/                      ── HTTP layer
-        │   ├── ApiController.java           All REST endpoints
-        │   └── DashboardController.java     Serves the dashboard HTML at /
-        │
-        └── config/
-            └── AppConfig.java               @EnableScheduling for cache eviction
-
-src/test/java/com/demo/upimesh/
-└── IdempotencyConcurrencyTest.java          The 3-bridges-at-once test + tamper test
+├── pom.xml                          Spring Boot 3.3, ONNX Runtime 1.17, DL4J
+├── models/
+│   ├── best_gnn.pt                  PyTorch GNN weights
+│   ├── fraud_classifier.onnx        ONNX model loaded by Java at runtime
+│   └── metadata.json                AUC, threshold metadata
+├── data/
+│   ├── transactions.csv             10,000 synthetic labeled transactions
+│   └── graph.pt                     PyTorch Geometric heterogeneous graph
+├── scripts/                         Python training pipeline (see above)
+└── src/main/java/com/demo/upimesh/
+    │
+    ├── UpiMeshApplication.java      Spring Boot entry point
+    │
+    ├── gnn/                         ── GNN layer (new)
+    │   ├── GNNFraudScorer.java      Loads ONNX model, scores transactions
+    │   └── TransactionFeatureExtractor.java  Builds 5-dim feature vector
+    │
+    ├── model/
+    │   ├── Account.java             JPA entity (@Version optimistic lock)
+    │   ├── Transaction.java         Ledger (+ gnnProbability, gnnReason fields)
+    │   ├── TransactionRepository.java  + countRecentBySender, existsBySenderVpaAndReceiverVpa
+    │   ├── MeshPacket.java          Wire format (outer fields readable, ciphertext opaque)
+    │   └── PaymentInstruction.java  Decrypted payload
+    │
+    ├── crypto/
+    │   ├── ServerKeyHolder.java     RSA-2048 keypair on startup
+    │   └── HybridCryptoService.java RSA-OAEP + AES-256-GCM + ciphertext hash
+    │
+    ├── service/
+    │   ├── BridgeIngestionService.java  Pipeline: hash→idempotency→decrypt→freshness→GNN→settle
+    │   ├── SettlementService.java       @Transactional debit+credit (+ stores GNN metadata)
+    │   ├── IdempotencyService.java      ConcurrentHashMap SETNX (Redis-equivalent)
+    │   ├── MeshSimulatorService.java    Gossip protocol simulation
+    │   ├── DemoService.java             Seeds accounts, simulates sender phone
+    │   └── VirtualDevice.java           One simulated phone in the mesh
+    │
+    └── controller/
+        ├── ApiController.java       REST endpoints (flush now returns fraudProbability)
+        └── DashboardController.java Serves dashboard at /
 ```
 
 ---
@@ -294,112 +353,102 @@ src/test/java/com/demo/upimesh/
 
 | Method | Path | What it does |
 |---|---|---|
-| GET | `/` | Dashboard HTML |
+| GET | `/` | Dashboard HTML (with GNN score columns) |
 | GET | `/api/server-key` | Server's RSA public key (base64) |
 | GET | `/api/accounts` | All accounts and balances |
-| GET | `/api/transactions` | Last 20 transactions |
-| GET | `/api/mesh/state` | Current state of every virtual device |
-| POST | `/api/demo/send` | Simulate sender phone — encrypt + inject packet |
-| POST | `/api/mesh/gossip` | Run one round of gossip across the mesh |
-| POST | `/api/mesh/flush` | Bridges with internet upload to backend (parallel) |
+| GET | `/api/transactions` | Last 20 transactions (includes `gnnProbability`, `gnnReason`) |
+| GET | `/api/mesh/state` | State of every virtual device |
+| POST | `/api/demo/send` | Simulate sender phone — encrypt + inject |
+| POST | `/api/mesh/gossip` | One gossip round |
+| POST | `/api/mesh/flush` | Bridges upload (parallel) — response includes `fraudProbability` |
 | POST | `/api/mesh/reset` | Clear mesh + idempotency cache |
-| POST | `/api/bridge/ingest` | **The production endpoint.** Real bridges POST here |
-| GET | `/h2-console` | Browse the in-memory database |
+| POST | `/api/bridge/ingest` | **Production endpoint** — real bridges POST here |
+| GET | `/h2-console` | Browse the in-memory H2 database |
 
-H2 console login: JDBC URL `jdbc:h2:mem:upimesh`, username `sa`, no password.
+### `/api/bridge/ingest` response (updated)
 
-### Request format for `/api/bridge/ingest`
-
-```http
-POST /api/bridge/ingest
-Content-Type: application/json
-X-Bridge-Node-Id: phone-bridge-42
-X-Hop-Count: 3
-
-{
-  "packetId": "550e8400-e29b-41d4-a716-446655440000",
-  "ttl": 2,
-  "createdAt": 1730000000000,
-  "ciphertext": "base64-encoded-RSA-and-AES-blob"
-}
-```
-
-Response:
 ```json
 {
-  "outcome": "SETTLED",                     // or "DUPLICATE_DROPPED" or "INVALID"
+  "outcome": "SETTLED",
   "packetHash": "a3f8c9...",
-  "reason": null,                            // populated on INVALID
-  "transactionId": 42                        // populated on SETTLED
+  "reason": "nominal",
+  "transactionId": 3,
+  "fraudProbability": 0.023,
+  "gnnReason": "nominal"
 }
 ```
+
+Possible `outcome` values: `SETTLED`, `DUPLICATE_DROPPED`, `INVALID`, `BLOCKED_BY_GNN`, `REJECTED`.
 
 ---
 
 ## Tests
 
-Run all tests:
-```
+```cmd
 mvnw.cmd test
 ```
 
-The three included tests:
+Three tests, all testing security-critical paths:
 
-- **`encryptDecryptRoundTrip`** — sanity-check that hybrid encryption is symmetric.
-- **`tamperedCiphertextIsRejected`** — flip a byte in the ciphertext, verify that `BridgeIngestionService` returns `INVALID` instead of crashing or settling.
-- **`singlePacketDeliveredByThreeBridgesSettlesExactlyOnce`** — the headline test. Three threads, one packet, simultaneous delivery. Asserts exactly one `SETTLED`, two `DUPLICATE_DROPPED`, and that the sender's balance changed by exactly the amount once.
+| Test | What it proves |
+|---|---|
+| `encryptDecryptRoundTrip` | Hybrid encryption is symmetric and lossless |
+| `tamperedCiphertextIsRejected` | A single flipped bit returns `INVALID`, not a silent wrong settlement |
+| `singlePacketDeliveredByThreeBridgesSettlesExactlyOnce` | Three concurrent bridge deliveries → exactly 1 `SETTLED`, 2 `DUPLICATE_DROPPED`, sender debited once |
+
+The concurrency test is the headline — it fires three threads at `BridgeIngestionService.ingest()` simultaneously with a `CountDownLatch` for maximum overlap.
 
 ---
 
 ## What's NOT real (and what would change for production)
 
-This is a teaching demo. To make it production-grade you'd swap these things:
-
 | What's in the demo | What it would be in production |
 |---|---|
 | H2 in-memory DB | PostgreSQL / MySQL with replicas |
-| `ConcurrentHashMap` for idempotency | Redis with `SET NX EX` |
-| RSA keypair regenerated on every startup | Private key in HSM (AWS KMS, HashiCorp Vault). Public key cached on devices. |
-| Server-side `DemoService.createPacket()` | Same code running on Android, in a Kotlin port |
-| Software-simulated mesh (`MeshSimulatorService`) | Real BLE GATT or Wi-Fi Direct between phones |
-| One settlement service that owns the ledger | Integration with NPCI / a real bank core |
-| No auth on `/api/bridge/ingest` | Mutual TLS or signed bridge-node certificates |
-| In-memory accounts seeded on startup | Real KYC'd users, real VPAs, real PIN verification against the bank |
-| H2 console exposed | Disabled |
-| No rate limiting | Per-bridge-node rate limit, per-sender velocity check |
-| Logs to console | Structured logs to a SIEM, alerts on `INVALID` spikes |
+| `ConcurrentHashMap` idempotency | Redis `SET NX EX` |
+| RSA keypair regenerated on startup | Private key in HSM (AWS KMS, HashiCorp Vault) |
+| Server-side `DemoService.createPacket()` | Same code on Android in Kotlin |
+| Software mesh simulation | Real BLE GATT or Wi-Fi Direct |
+| ONNX classifier head only | Full GNN forward pass in Python sidecar or TorchServe |
+| Synthetic training data | Real NPCI transaction logs with verified fraud labels |
+| Hand-crafted embedding projection | Full `R-GCN + GAT + TGN` graph forward pass (Penaganti architecture) |
+| No auth on `/api/bridge/ingest` | Mutual TLS + signed bridge-node certificates |
+| GNN block threshold hardcoded | Dynamic threshold from A/B testing on false-positive rate |
 
-The cryptography and idempotency code is essentially production-shaped. The infrastructure around it is what changes.
+The cryptography, idempotency, and GNN pipeline structure are production-shaped. The infrastructure around them is what changes.
 
 ---
 
 ## Honest limitations of the concept
 
-I want this README to be useful to you when someone reviews the project, so let's be straight about what this design **does not** solve. These are not implementation bugs — they're inherent to "no internet, anywhere in the chain":
+1. **The receiver cannot verify funds exist offline.** The payment is an IOU until the packet reaches the backend. If the sender's balance is empty by then, the settlement is `REJECTED`. Real offline UPI (UPI Lite) uses a pre-funded hardware-backed wallet to give cryptographic proof of available funds.
 
-1. **The receiver has no way to verify the sender has the funds.** When sender hands receiver a phone showing "₹500 sent," it's an IOU, not a settled payment. If the sender's account is empty when the packet finally reaches the backend, the settlement will be `REJECTED` and the receiver is out ₹500 with no recourse. *This is why real offline UPI (UPI Lite) uses a pre-funded hardware-backed wallet* — to give cryptographic proof of available funds offline.
-2. **A malicious sender can double-spend offline.** With ₹500 in their account, they could send a packet to Bob in basement A, walk to basement B, and send another ₹500 to Carol. Whichever packet hits the backend first wins; the other gets `REJECTED`. Same root cause as #1.
-3. **Bluetooth in real life is hard.** Background BLE on Android is heavily throttled since Android 8. iOS peripheral mode is locked down. Two strangers' phones reliably forming a GATT connection while the apps aren't actively open is genuinely difficult and a lot of energy. This demo skips that problem entirely by simulating the mesh.
-4. **Privacy / liability.** A stranger carries your encrypted transaction packet on their phone. They can't read it, but its existence is metadata. In a real deployment you'd want to think about regulatory disclosures and what happens if a device is seized.
+2. **A malicious sender can double-spend offline.** ₹500 in their account → they send it to Bob in basement A, walk to basement B, send it to Carol. First packet to reach the backend wins; the other is `REJECTED`.
 
-For a college / portfolio project: name the concept honestly as **"mesh-routed deferred settlement"** rather than "real-time offline UPI," and you'll have a much stronger pitch. The cryptography and idempotency work here is real engineering and worth showing off.
+3. **GNN block threshold is conservative by design.** `0.85` means the model is very confident before blocking. Lowering it catches more fraud but increases false positives. The right value depends on the business's tolerance for blocking legitimate payments.
+
+4. **Bluetooth in real life is hard.** Background BLE on Android is throttled since Android 8. iOS peripheral mode is locked down. This demo sidesteps these entirely by simulating the mesh.
+
+5. **Privacy / liability.** A stranger carries your encrypted transaction packet. They can't read it, but its existence is metadata. Real deployment requires regulatory disclosure and handling of seized devices.
 
 ---
 
-## Troubleshooting
+## Contributors
 
-**`java: command not found`** — Install JDK 17+. On Windows, `winget install EclipseAdoptium.Temurin.17.JDK` or download from adoptium.net.
-
-**Port 8080 already in use** — Change `server.port` in `application.properties`.
-
-**First `mvnw.cmd` run hangs for a long time** — It's downloading Maven (~10 MB) then dependencies (~80 MB). Give it 2–3 minutes on a normal connection. After that, startup is ~5 seconds.
-
-**`mvnw.cmd : The term 'mvnw.cmd' is not recognized`** — On PowerShell you need to prefix with `.\`: `.\mvnw.cmd spring-boot:run`.
-
-**Tests fail intermittently** — The concurrency test is timing-sensitive. If it ever flakes, run it 3x; if it consistently fails on your hardware, file the actual failure output.
+<a href="https://github.com/SparshKapoor-CODER/GNN_UPI/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=SparshKapoor-CODER/GNN_UPI" />
+</a>
 
 ---
 
 ## License
 
-Demo code, no license. Use it however you want for learning.
+Demo and research code. No license. Use it for learning, projects, and presentations.
+
+---
+
+## Papers referenced
+
+- Penaganti, R. (2025). *Graph Neural Network-Based Framework for Real-Time Financial Fraud Detection in Digital Payment Ecosystems.* Journal of Computing and Data Technology, 1(2), 91–97. https://doi.org/10.71426/jcdt.v1.i2.pp91-97
+- Mungara, D., Ramulu, H. S., & Acar, Y. (2025). *Security and Privacy Advice for UPI Users in India.* 34th USENIX Security Symposium.
+- Bhavani, C. N. (2024). *Analysis on Fraudulent Threats and Mitigating Strategies in UPI Transactions.* 12th International Conference on Emerging Trends in Corporate Finance and Financial Markets.
