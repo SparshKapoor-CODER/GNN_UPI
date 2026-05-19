@@ -122,13 +122,15 @@ public class ApiController {
             BridgeIngestionService.IngestResult r =
                     bridge.ingest(up.packet(), up.bridgeNodeId(), 5 - up.packet().getTtl());
             synchronized (results) {
-                results.add(Map.of(
-                        "bridgeNode", up.bridgeNodeId(),
-                        "packetId", up.packet().getPacketId().substring(0, 8),
-                        "outcome", r.outcome(),
-                        "reason", r.reason() == null ? "" : r.reason(),
-                        "transactionId", r.transactionId() == null ? -1 : r.transactionId()
-                ));
+                Map<String, Object> resultMap = new HashMap<>();
+                resultMap.put("bridgeNode", up.bridgeNodeId());
+                resultMap.put("packetId", up.packet().getPacketId().substring(0, 8));
+                resultMap.put("outcome", r.outcome());
+                resultMap.put("reason", r.reason() == null ? "" : r.reason());
+                resultMap.put("transactionId", r.transactionId() == null ? -1 : r.transactionId());
+                resultMap.put("fraudProbability", r.fraudProbability());
+                resultMap.put("gnnReason", r.gnnReason() == null ? "" : r.gnnReason());
+                results.add(resultMap);
             }
         });
 
