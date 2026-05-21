@@ -1,428 +1,552 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>UPI Offline Mesh — Demo</title>
-    <style>
-        * { box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            margin: 0; padding: 24px; background: #0d1117; color: #e6edf3;
-        }
-        h1 { margin-top: 0; color: #f0f6fc; }
-        h2 { color: #58a6ff; border-bottom: 1px solid #30363d; padding-bottom: 4px; margin-top: 32px; }
-        .container { max-width: 1300px; margin: 0 auto; }
-        .grid { display: grid; gap: 16px; }
-        .grid-2 { grid-template-columns: 1fr 1fr; }
-        .card {
-            background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px;
-        }
-        .device {
-            border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin-bottom: 8px;
-            background: #0d1117;
-        }
-        .device.bridge { border-color: #2ea043; background: #052e16; }
-        .device.offline { opacity: 0.85; }
-        .badge {
-            display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px;
-            font-weight: 600; margin-left: 8px;
-        }
-        .badge-online  { background: #2ea043; color: white; }
-        .badge-offline { background: #6e7681; color: white; }
-        .badge-gnn-on  { background: #1f6feb; color: white; }
-        .badge-gnn-off { background: #6e7681; color: white; }
-        .packet-id {
-            font-family: 'Consolas', 'Monaco', monospace; font-size: 11px;
-            background: #21262d; padding: 2px 6px; border-radius: 3px; margin: 2px;
-            display: inline-block;
-        }
-        button {
-            background: #238636; color: white; border: none; padding: 8px 16px;
-            border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;
-            margin: 4px;
-        }
-        button:hover { background: #2ea043; }
-        button.danger    { background: #da3633; }
-        button.danger:hover { background: #f85149; }
-        button.secondary { background: #1f6feb; }
-        button.secondary:hover { background: #388bfd; }
-        input, select {
-            background: #0d1117; color: #e6edf3; border: 1px solid #30363d;
-            border-radius: 4px; padding: 6px 10px; font-size: 14px; margin: 4px;
-        }
-        table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        th, td { text-align: left; padding: 8px; border-bottom: 1px solid #30363d; }
-        th { color: #8b949e; font-weight: 600; font-size: 11px; text-transform: uppercase; }
 
-        /* outcome status colours */
-        .status-SETTLED          { color: #56d364; font-weight: 600; }
-        .status-REJECTED         { color: #f85149; font-weight: 600; }
-        .status-DUPLICATE_DROPPED{ color: #d29922; font-weight: 600; }
-        .status-INVALID          { color: #f85149; font-weight: 600; }
-        .status-BLOCKED_BY_GNN   { color: #ff7b72; font-weight: 600; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-        /* GNN score pill */
-        .score-pill {
-            display: inline-block; font-size: 11px; font-weight: 700;
-            padding: 2px 8px; border-radius: 10px; font-family: 'Consolas', monospace;
-        }
-        .score-allow  { background: #1a4a1a; color: #56d364; border: 1px solid #2ea043; }
-        .score-flag   { background: #3d3000; color: #e3b341; border: 1px solid #d29922; }
-        .score-block  { background: #4a0000; color: #ff7b72; border: 1px solid #da3633; }
-        .score-na     { background: #1c2128; color: #6e7681; border: 1px solid #30363d; }
+<title>UPI Mesh</title>
 
-        /* reason tag */
-        .reason-tag {
-            font-size: 10px; color: #8b949e; font-family: 'Consolas', monospace;
-            background: #21262d; padding: 1px 5px; border-radius: 3px;
-            display: inline-block; margin: 1px;
-        }
+<link rel="stylesheet" href="/style.css">
 
-        #log {
-            background: #010409; color: #7ee787; padding: 12px; border-radius: 6px;
-            font-family: 'Consolas', 'Monaco', monospace; font-size: 12px;
-            max-height: 260px; overflow-y: auto; white-space: pre-wrap;
-            border: 1px solid #30363d;
-        }
-        .controls { background: #161b22; padding: 16px; border-radius: 8px;
-                    border: 1px solid #30363d; margin-bottom: 16px; }
-        .step-num {
-            display: inline-block; background: #58a6ff; color: white;
-            border-radius: 50%; width: 24px; height: 24px; text-align: center;
-            line-height: 24px; font-weight: 600; margin-right: 8px;
-        }
-        .balance { font-family: 'Consolas', monospace; color: #56d364; font-weight: 600; }
-        .small   { font-size: 12px; color: #8b949e; }
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 
-        /* GNN stats bar */
-        .gnn-stats {
-            display: flex; gap: 16px; flex-wrap: wrap;
-            background: #0d1117; border: 1px solid #30363d;
-            border-radius: 6px; padding: 10px 14px; margin-top: 10px;
-        }
-        .gnn-stat { text-align: center; }
-        .gnn-stat-val { font-size: 22px; font-weight: 700; font-family: 'Consolas', monospace; }
-        .gnn-stat-lbl { font-size: 10px; color: #8b949e; text-transform: uppercase; }
-        .val-allow { color: #56d364; }
-        .val-flag  { color: #e3b341; }
-        .val-block { color: #ff7b72; }
-        .val-na    { color: #6e7681; }
-    </style>
 </head>
-<body>
-<div class="container">
-    <h1>📡 UPI Offline Mesh + GNN Fraud Detection</h1>
-    <p class="small">
-        Offline payments routed through a Bluetooth mesh. Every transaction is scored
-        by a Graph Neural Network before settlement.
-        <span id="gnn-badge" class="badge badge-gnn-off">GNN: checking...</span>
-    </p>
 
-    <!-- ── Demo controls ─────────────────────────────────────────────────── -->
-    <div class="controls">
-        <h3 style="margin-top:0">🎬 Demo Flow</h3>
+<body class="dark">
 
-        <div>
-            <span class="step-num">1</span><strong>Compose payment</strong>
-            <br>
-            <select id="senderVpa">
-                <option>alice@demo</option>
-                <option>bob@demo</option>
-                <option>carol@demo</option>
-            </select>
-            →
-            <select id="receiverVpa">
-                <option>bob@demo</option>
-                <option>carol@demo</option>
-                <option>alice@demo</option>
-                <option>dave@demo</option>
-            </select>
-            ₹<input type="number" id="amount" value="500" style="width:100px">
-            PIN <input type="text" id="pin" value="1234" style="width:70px" maxlength="4">
-            <button onclick="sendPacket()">📤 Inject into Mesh</button>
-        </div>
+<!-- NAVBAR -->
 
-        <div style="margin-top:12px">
-            <span class="step-num">2</span><strong>Gossip</strong> — packets hop device-to-device
-            <button class="secondary" onclick="gossip()">🔄 Run Gossip Round</button>
-        </div>
+<nav>
 
-        <div style="margin-top:12px">
-            <span class="step-num">3</span><strong>Bridge hits 4G → uploads to backend</strong>
-            <button class="secondary" onclick="flushBridges()">📡 Bridges Upload to Backend</button>
-            <span class="small">(parallel — exercises idempotency + GNN scoring)</span>
-        </div>
+<div class="container nav-content">
 
-        <div style="margin-top:12px">
-            <button class="danger" onclick="resetMesh()">🗑 Reset Mesh + Cache</button>
-        </div>
-    </div>
+<div class="logo">
 
-    <!-- ── Top row: devices + balances ──────────────────────────────────── -->
-    <div class="grid grid-2">
-        <div class="card">
-            <h2>📱 Mesh Devices</h2>
-            <div id="devices"></div>
-        </div>
+<div class="logo-box">📡</div>
 
-        <div class="card">
-            <h2>🏦 Account Balances</h2>
-            <table id="accounts-table">
-                <thead><tr><th>VPA</th><th>Holder</th><th>Balance</th></tr></thead>
-                <tbody></tbody>
-            </table>
-            <p class="small" id="cacheInfo" style="margin-top:8px"></p>
-
-            <!-- GNN session stats -->
-            <div class="gnn-stats" id="gnn-stats">
-                <div class="gnn-stat">
-                    <div class="gnn-stat-val val-allow" id="stat-allow">0</div>
-                    <div class="gnn-stat-lbl">✅ Allowed</div>
-                </div>
-                <div class="gnn-stat">
-                    <div class="gnn-stat-val val-flag" id="stat-flag">0</div>
-                    <div class="gnn-stat-lbl">⚠️ Flagged</div>
-                </div>
-                <div class="gnn-stat">
-                    <div class="gnn-stat-val val-block" id="stat-block">0</div>
-                    <div class="gnn-stat-lbl">🚫 Blocked</div>
-                </div>
-                <div class="gnn-stat">
-                    <div class="gnn-stat-val val-na" id="stat-dup">0</div>
-                    <div class="gnn-stat-lbl">♻️ Duplicates</div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- ── Transaction ledger ────────────────────────────────────────────── -->
-    <div class="card" style="margin-top:16px">
-        <h2>📜 Transaction Ledger</h2>
-        <table id="tx-table">
-            <thead><tr>
-                <th>ID</th>
-                <th>From</th>
-                <th>To</th>
-                <th>Amount</th>
-                <th>Status</th>
-                <th>GNN Score</th>
-                <th>Reason</th>
-                <th>Bridge</th>
-                <th>Hops</th>
-                <th>Settled</th>
-            </tr></thead>
-            <tbody></tbody>
-        </table>
-    </div>
-
-    <!-- ── Bridge upload results (last flush) ───────────────────────────── -->
-    <div class="card" id="flush-results-card" style="margin-top:16px; display:none">
-        <h2>📡 Last Bridge Upload Results</h2>
-        <table id="flush-table">
-            <thead><tr>
-                <th>Bridge Node</th>
-                <th>Packet</th>
-                <th>Outcome</th>
-                <th>GNN Score</th>
-                <th>Reason</th>
-                <th>TX ID</th>
-            </tr></thead>
-            <tbody id="flush-tbody"></tbody>
-        </table>
-    </div>
-
-    <!-- ── Activity log ─────────────────────────────────────────────────── -->
-    <div class="card" style="margin-top:16px">
-        <h2>🪵 Activity Log</h2>
-        <div id="log"></div>
-    </div>
+<div>
+<h2>UPI <span>Mesh</span></h2>
+<p>Offline Payments</p>
 </div>
 
+</div>
+
+<div class="links">
+
+<a href="#">Home</a>
+<a href="#features">Features</a>
+<a href="#security">Security</a>
+<a href="#demo">Demo</a>
+<a href="#dashboard">Dashboard</a>
+
+</div>
+
+<button class="theme-btn" onclick="toggleTheme()">
+☀️
+</button>
+
+</div>
+
+</nav>
+
+<!-- HERO -->
+
+<section class="hero">
+
+<div class="container hero-content">
+
+<div>
+
+<div class="ai-badge">
+🧠 AI Fraud Detection Active
+</div>
+
+<h1>
+Secure Offline UPI Through Mesh Networking
+</h1>
+
+<p>
+Send encrypted UPI payments without internet using Bluetooth mesh,
+AI-powered GNN fraud detection, bridge-node uploads, and replay protection.
+</p>
+
+<div class="hero-buttons">
+
+<button class="btn primary-btn"
+onclick="document.getElementById('demo').scrollIntoView({behavior:'smooth'})">
+🚀 Try Live Demo
+</button>
+
+<button class="btn secondary-btn"
+onclick="document.getElementById('security').scrollIntoView({behavior:'smooth'})">
+🔐 Security Architecture
+</button>
+
+</div>
+
+<div class="stats">
+
+<div class="stat-card">
+<h2 id="stat-allow">0</h2>
+<p>Allowed</p>
+</div>
+
+<div class="stat-card">
+<h2 id="stat-block">0</h2>
+<p>Blocked</p>
+</div>
+
+<div class="stat-card">
+<h2>5</h2>
+<p>Mesh Devices</p>
+</div>
+
+</div>
+
+</div>
+
+<div class="hero-panel">
+
+<div class="live-tag">
+UPI Mesh • LIVE
+</div>
+
+<div class="panel-card">
+
+<h2>Bridge Upload</h2>
+
+<p>Offline packets syncing...</p>
+
+<div class="progress">
+<div></div>
+</div>
+
+</div>
+
+<div class="panel-card">
+
+<h2>GNN Fraud Score</h2>
+
+<div class="risk">
+12%
+</div>
+
+<p>Low Risk</p>
+
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<!-- FEATURES -->
+
+<section class="section" id="features">
+
+<div class="container">
+
+<div class="section-title">
+
+<h2>Discover UPI Mesh</h2>
+
+<p>
+Real-time decentralized offline payment infrastructure
+</p>
+
+</div>
+
+<div class="grid feature-grid">
+
+<div class="card-ui">
+<div class="icon">📶</div>
+<h3>Offline Payments</h3>
+<p>
+Transfer money without internet using decentralized Bluetooth mesh routing.
+</p>
+</div>
+
+<div class="card-ui">
+<div class="icon">🧠</div>
+<h3>GNN Fraud AI</h3>
+<p>
+Graph Neural Networks analyze suspicious patterns in real time.
+</p>
+</div>
+
+<div class="card-ui">
+<div class="icon">🔐</div>
+<h3>Hybrid Encryption</h3>
+<p>
+RSA + AES-GCM secure packet transmission.
+</p>
+</div>
+
+<div class="card-ui">
+<div class="icon">🌐</div>
+<h3>Bridge Upload</h3>
+<p>
+Transactions sync automatically when connectivity returns.
+</p>
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<!-- SECURITY -->
+
+<section class="section" id="security">
+
+<div class="container">
+
+<div class="section-title">
+
+<h2>Security Architecture</h2>
+
+<p>
+Advanced multi-layer protection for offline UPI transactions
+</p>
+
+</div>
+
+<div class="grid feature-grid">
+
+<div class="card-ui">
+<div class="icon">🔐</div>
+<h3>RSA Encryption</h3>
+<p>
+Every packet is encrypted using public-key cryptography before mesh routing.
+</p>
+</div>
+
+<div class="card-ui">
+<div class="icon">🛡️</div>
+<h3>AES-GCM Integrity</h3>
+<p>
+Ensures confidentiality and tamper-proof packet verification.
+</p>
+</div>
+
+<div class="card-ui">
+<div class="icon">♻️</div>
+<h3>Replay Protection</h3>
+<p>
+Idempotency cache blocks duplicate and replay attacks.
+</p>
+</div>
+
+<div class="card-ui">
+<div class="icon">📡</div>
+<h3>Bridge Settlement</h3>
+<p>
+Bridge nodes upload encrypted packets to backend servers securely.
+</p>
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<!-- DEMO -->
+
+<section class="section" id="demo">
+
+<div class="container">
+
+<div class="section-title">
+
+<h2>Live Demo</h2>
+
+<p>
+Test Offline Mesh Transactions
+</p>
+
+</div>
+
+<div class="grid demo-grid">
+
+<div class="card-ui">
+
+<h3>Compose Payment</h3>
+
+<select id="senderVpa">
+<option>alice@demo</option>
+<option>bob@demo</option>
+<option>carol@demo</option>
+</select>
+
+<select id="receiverVpa">
+<option>bob@demo</option>
+<option>carol@demo</option>
+<option>alice@demo</option>
+<option>dave@demo</option>
+</select>
+
+<input type="number" id="amount" value="500">
+
+<input type="password" id="pin" value="1234">
+
+<button class="action-btn" onclick="sendPacket()">
+📤 Inject Into Mesh
+</button>
+
+</div>
+
+<div class="card-ui">
+
+<h3>Mesh Gossip</h3>
+
+<p>
+Devices share packets offline using mesh networking.
+</p>
+
+<button class="action-btn" onclick="gossip()">
+🔄 Run Gossip Round
+</button>
+
+</div>
+
+<div class="card-ui">
+
+<h3>Bridge Upload</h3>
+
+<p>
+4G bridge uploads encrypted packets to backend.
+</p>
+
+<button class="action-btn" onclick="flushBridges()">
+📡 Upload To Backend
+</button>
+
+</div>
+
+</div>
+
+</div>
+
+</section>
+
+<!-- DASHBOARD -->
+
+<section class="section" id="dashboard">
+
+<div class="container">
+
+<div class="dashboard-grid">
+
+<div class="dashboard-card">
+
+<h2>🏦 Account Balances</h2>
+
+<table id="accounts-table">
+
+<thead>
+<tr>
+<th>VPA</th>
+<th>Holder</th>
+<th>Balance</th>
+</tr>
+</thead>
+
+<tbody></tbody>
+
+</table>
+
+</div>
+
+<div class="dashboard-card">
+
+<h2>📜 Transaction Ledger</h2>
+
+<table id="tx-table">
+
+<thead>
+<tr>
+<th>ID</th>
+<th>From</th>
+<th>To</th>
+<th>Amount</th>
+<th>Status</th>
+</tr>
+</thead>
+
+<tbody></tbody>
+
+</table>
+
+</div>
+
+</div>
+
+<div class="dashboard-card" style="margin-top:30px;">
+
+<h2>🪵 Activity Log</h2>
+
+<div id="log"></div>
+
+</div>
+
+</div>
+
+</section>
+
+<footer>
+
+<div class="container footer-content">
+
+<div>
+
+<h2>UPI Offline Mesh</h2>
+
+<p>
+Secure • Offline • Intelligent
+</p>
+
+</div>
+
+<div class="footer-links">
+
+<a href="#">FAQ</a>
+<a href="#">Security</a>
+<a href="#">About</a>
+<a href="#">Support</a>
+
+</div>
+
+</div>
+
+</footer>
+
 <script>
-// ── Session counters (resets on page reload) ──────────────────────────────
-const sessionStats = { allow: 0, flag: 0, block: 0, dup: 0 };
 
-function updateStats() {
-    document.getElementById('stat-allow').textContent = sessionStats.allow;
-    document.getElementById('stat-flag').textContent  = sessionStats.flag;
-    document.getElementById('stat-block').textContent = sessionStats.block;
-    document.getElementById('stat-dup').textContent   = sessionStats.dup;
+let dark=true;
+
+function toggleTheme(){
+
+dark=!dark;
+
+document.body.classList.toggle("dark");
+
+document.querySelector(".theme-btn").innerHTML=
+dark?"☀️":"🌙";
+
 }
 
-// ── Logging ───────────────────────────────────────────────────────────────
-function log(msg) {
-    const el = document.getElementById('log');
-    el.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg + '\n' + el.textContent;
+function log(msg){
+
+const el=document.getElementById('log');
+
+el.innerHTML=
+'['+new Date().toLocaleTimeString()+'] '+msg+'<br>'+el.innerHTML;
+
 }
 
-// ── GNN score pill HTML ───────────────────────────────────────────────────
-function scorePill(prob) {
-    if (prob === null || prob === undefined) {
-        return '<span class="score-pill score-na">N/A</span>';
-    }
-    const pct = (prob * 100).toFixed(1);
-    if (prob >= 0.85) return `<span class="score-pill score-block">🚫 ${pct}%</span>`;
-    if (prob >= 0.50) return `<span class="score-pill score-flag">⚠️ ${pct}%</span>`;
-    return `<span class="score-pill score-allow">✅ ${pct}%</span>`;
+async function refresh(){
+
+try{
+
+const accs=await fetch('/api/accounts')
+.then(r=>r.json());
+
+document.querySelector('#accounts-table tbody').innerHTML=
+accs.map(a=>`
+<tr>
+<td>${a.vpa}</td>
+<td>${a.holderName}</td>
+<td>₹${parseFloat(a.balance).toFixed(2)}</td>
+</tr>
+`).join('');
+
+const txs=await fetch('/api/transactions')
+.then(r=>r.json());
+
+document.querySelector('#tx-table tbody').innerHTML=
+txs.map(t=>`
+<tr>
+<td>${t.id}</td>
+<td>${t.senderVpa}</td>
+<td>${t.receiverVpa}</td>
+<td>₹${parseFloat(t.amount).toFixed(2)}</td>
+<td>${t.status}</td>
+</tr>
+`).join('');
+
+}catch(e){
+
+log("Error loading dashboard");
+
 }
 
-// ── Reason tags HTML ──────────────────────────────────────────────────────
-function reasonTags(reason) {
-    if (!reason || reason === 'nominal' || reason === '') return '<span class="small">—</span>';
-    return reason.split(' ')
-        .filter(r => r.length > 0)
-        .map(r => `<span class="reason-tag">${r}</span>`)
-        .join('');
 }
 
-// ── Refresh all panels ────────────────────────────────────────────────────
-async function refresh() {
-    try {
-        const m = await fetch('/api/mesh/state').then(r => r.json());
-        document.getElementById('devices').innerHTML = m.devices.map(d => `
-            <div class="device ${d.hasInternet ? 'bridge' : 'offline'}">
-                <strong>${d.deviceId}</strong>
-                <span class="badge ${d.hasInternet ? 'badge-online' : 'badge-offline'}">
-                    ${d.hasInternet ? '🌐 4G' : '🚫 OFFLINE'}
-                </span>
-                <span class="small">holding ${d.packetCount} packet(s)</span>
-                <div>${d.packetIds.map(id => `<span class="packet-id">${id}</span>`).join('')}</div>
-            </div>
-        `).join('');
-        document.getElementById('cacheInfo').textContent = `Idempotency cache size: ${m.idempotencyCacheSize}`;
+async function sendPacket(){
 
-        const accs = await fetch('/api/accounts').then(r => r.json());
-        document.querySelector('#accounts-table tbody').innerHTML = accs.map(a => `
-            <tr>
-                <td>${a.vpa}</td>
-                <td>${a.holderName}</td>
-                <td class="balance">₹${parseFloat(a.balance).toFixed(2)}</td>
-            </tr>
-        `).join('');
+const body={
 
-        const txs = await fetch('/api/transactions').then(r => r.json());
-        document.querySelector('#tx-table tbody').innerHTML = txs.map(t => `
-            <tr>
-                <td>${t.id}</td>
-                <td>${t.senderVpa}</td>
-                <td>${t.receiverVpa}</td>
-                <td class="balance">₹${parseFloat(t.amount).toFixed(2)}</td>
-                <td class="status-${t.status}">${t.status}</td>
-                <td>${scorePill(t.gnnProbability)}</td>
-                <td>${reasonTags(t.gnnReason)}</td>
-                <td>${t.bridgeNodeId}</td>
-                <td>${t.hopCount}</td>
-                <td class="small">${new Date(t.settledAt).toLocaleTimeString()}</td>
-            </tr>
-        `).join('');
+senderVpa:document.getElementById('senderVpa').value,
+receiverVpa:document.getElementById('receiverVpa').value,
+amount:parseFloat(document.getElementById('amount').value),
+pin:document.getElementById('pin').value,
+ttl:5,
+startDevice:'phone-alice'
 
-        checkGnnStatus();
-    } catch (e) {
-        log('⚠️ Refresh error: ' + e.message);
-    }
-}
+};
 
-// ── Check GNN enabled status ──────────────────────────────────────────────
-async function checkGnnStatus() {
-    // We infer GNN status from the last flush result if available.
-    // If no flush yet, badge stays neutral.
-}
+await fetch('/api/demo/send',{
 
-// ── Send packet ───────────────────────────────────────────────────────────
-async function sendPacket() {
-    const body = {
-        senderVpa:   document.getElementById('senderVpa').value,
-        receiverVpa: document.getElementById('receiverVpa').value,
-        amount:      parseFloat(document.getElementById('amount').value),
-        pin:         document.getElementById('pin').value,
-        ttl:         5,
-        startDevice: 'phone-alice'
-    };
-    const r = await fetch('/api/demo/send', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body)
-    }).then(r => r.json());
+method:'POST',
 
-    log(`📤 Packet ${r.packetId.substring(0,8)} injected at ${r.injectedAt} (TTL ${r.ttl})`);
-    log(`   cipher: ${r.ciphertextPreview}`);
-    refresh();
-}
+headers:{
+'Content-Type':'application/json'
+},
 
-// ── Gossip ────────────────────────────────────────────────────────────────
-async function gossip() {
-    const r = await fetch('/api/mesh/gossip', {method: 'POST'}).then(r => r.json());
-    log(`🔄 Gossip: ${r.transfers} transfer(s) — ${JSON.stringify(r.deviceCounts)}`);
-    refresh();
-}
+body:JSON.stringify(body)
 
-// ── Flush bridges — shows GNN results ────────────────────────────────────
-async function flushBridges() {
-    const r = await fetch('/api/mesh/flush', {method: 'POST'}).then(r => r.json());
+});
 
-    log(`📡 ${r.uploadsAttempted} bridge upload(s):`);
+log("Packet injected into mesh");
 
-    // Update session stats and log each result
-    r.results.forEach(res => {
-        const prob = res.fraudProbability;
-        const outcome = res.outcome;
-
-        if      (outcome === 'SETTLED')           { sessionStats.allow++; }
-        else if (outcome === 'DUPLICATE_DROPPED') { sessionStats.dup++;   }
-        else if (outcome === 'BLOCKED_BY_GNN')    { sessionStats.block++; }
-
-        const probStr = (prob !== null && prob !== undefined && prob >= 0)
-            ? `prob=${(prob * 100).toFixed(1)}%`
-            : 'no score';
-
-        log(`   ${res.bridgeNode} │ pkt ${res.packetId} │ ${outcome} │ ${probStr}` +
-            (res.reason && res.reason !== 'nominal' ? ` │ ${res.reason}` : ''));
-    });
-
-    // Render flush results table
-    document.getElementById('flush-results-card').style.display = 'block';
-    document.getElementById('flush-tbody').innerHTML = r.results.map(res => `
-        <tr>
-            <td>${res.bridgeNode}</td>
-            <td><span class="packet-id">${res.packetId}</span></td>
-            <td class="status-${res.outcome}">${res.outcome}</td>
-            <td>${scorePill(res.fraudProbability)}</td>
-            <td>${reasonTags(res.reason)}</td>
-            <td>${res.transactionId > 0 ? '#' + res.transactionId : '—'}</td>
-        </tr>
-    `).join('');
-
-    // Update GNN badge based on results
-    const hadScore = r.results.some(res =>
-        res.fraudProbability !== null && res.fraudProbability !== undefined && res.fraudProbability >= 0);
-    const badge = document.getElementById('gnn-badge');
-    if (hadScore) {
-        badge.className = 'badge badge-gnn-on';
-        badge.textContent = 'GNN: ACTIVE';
-    } else {
-        badge.className = 'badge badge-gnn-off';
-        badge.textContent = 'GNN: disabled';
-    }
-
-    updateStats();
-    refresh();
-}
-
-// ── Reset ─────────────────────────────────────────────────────────────────
-async function resetMesh() {
-    await fetch('/api/mesh/reset', {method: 'POST'});
-    sessionStats.allow = 0; sessionStats.flag = 0;
-    sessionStats.block = 0; sessionStats.dup  = 0;
-    updateStats();
-    document.getElementById('flush-results-card').style.display = 'none';
-    document.getElementById('flush-tbody').innerHTML = '';
-    log('🗑 mesh + idempotency cache cleared');
-    refresh();
-}
-
-// ── Boot ──────────────────────────────────────────────────────────────────
 refresh();
-setInterval(refresh, 3000);
+
+}
+
+async function gossip(){
+
+await fetch('/api/mesh/gossip',{
+method:'POST'
+});
+
+log("Mesh gossip completed");
+
+refresh();
+
+}
+
+async function flushBridges(){
+
+await fetch('/api/mesh/flush',{
+method:'POST'
+});
+
+log("Bridge uploaded packets");
+
+refresh();
+
+}
+
+refresh();
+
+setInterval(refresh,3000);
+
 </script>
+
 </body>
 </html>
