@@ -435,12 +435,8 @@ The cryptography, idempotency, and GNN pipeline structure are production-shaped.
 
 ## Contributors
 
-<a href="https://github.com/SparshKapoor-CODER">
-  <img src="https://github.com/SparshKapoor-CODER.png" width="50px"/>
-</a>
-
-<a href="https://github.com/drishti-tech2507">
-  <img src="https://github.com/drishti-tech2507.png" width="50px"/>
+<a href="https://github.com/SparshKapoor-CODER/GNN_UPI/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=SparshKapoor-CODER/GNN_UPI" />
 </a>
 
 ---
